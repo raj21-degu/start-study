@@ -20,7 +20,7 @@ class StartStudyApp extends StatelessWidget {
         brightness: Brightness.dark,
       ),
       scaffoldBackgroundColor: const Color(0xFF0B0F14),
-      cardTheme: const CardThemeData(
+      cardTheme: const CardTheme(
         color: Color(0xFF141A21),
         elevation: 0,
       ),
@@ -60,8 +60,11 @@ class _RootScreenState extends State<RootScreen> {
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: page,
-        onDestinationSelected: (value) =>
-            setState(() => page = value),
+        onDestinationSelected: (value) {
+          setState(() {
+            page = value;
+          });
+        },
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.timer_outlined),
@@ -97,12 +100,14 @@ class StudySession {
   final DateTime date;
   final bool strict;
 
-  Map<String, dynamic> toMap() => {
-        'subject': subject,
-        'seconds': seconds,
-        'date': date.toIso8601String(),
-        'strict': strict,
-      };
+  Map<String, dynamic> toMap() {
+    return {
+      'subject': subject,
+      'seconds': seconds,
+      'date': date.toIso8601String(),
+      'strict': strict,
+    };
+  }
 
   static StudySession fromMap(Map<String, dynamic> map) {
     return StudySession(
@@ -124,6 +129,7 @@ class StudyStore {
     try {
       final raw = _prefs.getString('sessions') ?? '[]';
       final decoded = jsonDecode(raw) as List;
+
       return decoded
           .map(
             (item) => StudySession.fromMap(
@@ -140,11 +146,13 @@ class StudyStore {
     final encoded = jsonEncode(
       sessions.map((session) => session.toMap()).toList(),
     );
+
     await _prefs.setString('sessions', encoded);
   }
 
-  int get dailyGoalMinutes =>
-      _prefs.getInt('dailyGoalMinutes') ?? 180;
+  int get dailyGoalMinutes {
+    return _prefs.getInt('dailyGoalMinutes') ?? 180;
+  }
 
   Future<void> setDailyGoalMinutes(int minutes) async {
     await _prefs.setInt('dailyGoalMinutes', minutes);
@@ -159,7 +167,7 @@ class FocusScreen extends StatefulWidget {
 }
 
 class _FocusScreenState extends State<FocusScreen> {
-  final subjects = [
+  final List<String> subjects = [
     'History',
     'Political Science',
     'Geography',
@@ -207,10 +215,13 @@ class _FocusScreenState extends State<FocusScreen> {
     });
   }
 
-  int get duration => (onBreak ? breakMinutes : focusMinutes) * 60;
+  int get duration {
+    return (onBreak ? breakMinutes : focusMinutes) * 60;
+  }
 
   int get todaySeconds {
     final now = DateTime.now();
+
     return sessions
         .where(
           (session) =>
@@ -222,11 +233,12 @@ class _FocusScreenState extends State<FocusScreen> {
   }
 
   int get streak {
-    var count = 0;
+    int count = 0;
     final today = DateTime.now();
 
-    for (var i = 0; i < 365; i++) {
+    for (int i = 0; i < 365; i++) {
       final day = today.subtract(Duration(days: i));
+
       final seconds = sessions
           .where(
             (session) =>
@@ -250,14 +262,17 @@ class _FocusScreenState extends State<FocusScreen> {
     final hours = seconds ~/ 3600;
     final minutes = (seconds % 3600) ~/ 60;
     final secs = seconds % 60;
+
     final result =
         '${minutes.toString().padLeft(2, '0')}:'
         '${secs.toString().padLeft(2, '0')}';
+
     return hours > 0 ? '$hours:$result' : result;
   }
 
   void refresh() {
     final anchor = started;
+
     if (!running || anchor == null) return;
 
     final seconds =
@@ -266,7 +281,9 @@ class _FocusScreenState extends State<FocusScreen> {
     if (mode != 'Stopwatch' && seconds >= duration) {
       finish();
     } else {
-      setState(() => elapsed = seconds);
+      setState(() {
+        elapsed = seconds;
+      });
     }
   }
 
@@ -277,18 +294,23 @@ class _FocusScreenState extends State<FocusScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Strict Mode is on. Complete the session or use Reset before leaving.',
+            'Strict Mode is on. Complete the session or reset before leaving.',
           ),
         ),
       );
     }
 
     started = DateTime.now();
-    setState(() => running = true);
+
+    setState(() {
+      running = true;
+    });
 
     ticker = Timer.periodic(
       const Duration(milliseconds: 250),
-      (_) => refresh(),
+      (timer) {
+        refresh();
+      },
     );
   }
 
@@ -296,12 +318,16 @@ class _FocusScreenState extends State<FocusScreen> {
     if (!running) return;
 
     refresh();
+
     if (!running) return;
 
     ticker?.cancel();
     accumulated = elapsed;
     started = null;
-    setState(() => running = false);
+
+    setState(() {
+      running = false;
+    });
   }
 
   void reset() {
@@ -316,6 +342,7 @@ class _FocusScreenState extends State<FocusScreen> {
     }
 
     ticker?.cancel();
+
     setState(() {
       running = false;
       onBreak = false;
@@ -344,12 +371,12 @@ class _FocusScreenState extends State<FocusScreen> {
 
   void finish() {
     ticker?.cancel();
+
     final wasBreak = onBreak;
 
     if (!wasBreak) {
-      saveSession(
-        mode == 'Stopwatch' ? elapsed : duration,
-      );
+      final seconds = mode == 'Stopwatch' ? elapsed : duration;
+      saveSession(seconds);
     }
 
     setState(() {
@@ -380,12 +407,14 @@ class _FocusScreenState extends State<FocusScreen> {
   @override
   Widget build(BuildContext context) {
     final locked = running || elapsed > 0 || onBreak;
+
     final display = mode == 'Stopwatch'
         ? elapsed
         : (duration - elapsed).clamp(0, duration).toInt();
+
+    final goalSeconds = (store?.dailyGoalMinutes ?? 180) * 60;
     final goalProgress =
-        (todaySeconds / (store?.dailyGoalMinutes ?? 180 * 60))
-            .clamp(0.0, 1.0);
+        goalSeconds == 0 ? 0.0 : todaySeconds / goalSeconds;
 
     return SafeArea(
       child: ListView(
@@ -402,7 +431,9 @@ class _FocusScreenState extends State<FocusScreen> {
                       style: Theme.of(context)
                           .textTheme
                           .headlineSmall
-                          ?.copyWith(fontWeight: FontWeight.w800),
+                          ?.copyWith(
+                            fontWeight: FontWeight.w800,
+                          ),
                     ),
                     Text(
                       'Take back your study time.',
@@ -460,12 +491,12 @@ class _FocusScreenState extends State<FocusScreen> {
                           alignment: Alignment.center,
                           children: [
                             CircularProgressIndicator(
-                              value: goalProgress,
+                              value: goalProgress.clamp(0.0, 1.0),
                               strokeWidth: 7,
                               backgroundColor: Colors.white12,
                             ),
                             Text(
-                              '${(goalProgress * 100).round()}%',
+                              '${(goalProgress.clamp(0.0, 1.0) * 100).round()}%',
                               style: Theme.of(context)
                                   .textTheme
                                   .labelLarge,
@@ -485,8 +516,11 @@ class _FocusScreenState extends State<FocusScreen> {
                     value: strictMode,
                     onChanged: running
                         ? null
-                        : (value) =>
-                            setState(() => strictMode = value),
+                        : (value) {
+                            setState(() {
+                              strictMode = value;
+                            });
+                          },
                   ),
                 ],
               ),
@@ -497,7 +531,7 @@ class _FocusScreenState extends State<FocusScreen> {
             color: Theme.of(context)
                 .colorScheme
                 .primary
-                .withValues(alpha: 0.12),
+                .withOpacity(0.12),
             child: Padding(
               padding: const EdgeInsets.symmetric(
                 vertical: 40,
@@ -533,7 +567,9 @@ class _FocusScreenState extends State<FocusScreen> {
                         : onBreak
                             ? 'Rest and recover'
                             : '$focusMinutes minute focus round',
-                    style: const TextStyle(color: Colors.white70),
+                    style: const TextStyle(
+                      color: Colors.white70,
+                    ),
                   ),
                 ],
               ),
@@ -556,7 +592,11 @@ class _FocusScreenState extends State<FocusScreen> {
                 .toList(),
             onChanged: locked
                 ? null
-                : (value) => setState(() => mode = value!),
+                : (value) {
+                    setState(() {
+                      mode = value!;
+                    });
+                  },
           ),
           const SizedBox(height: 16),
           DropdownButtonFormField<String>(
@@ -575,7 +615,11 @@ class _FocusScreenState extends State<FocusScreen> {
                 .toList(),
             onChanged: locked
                 ? null
-                : (value) => setState(() => subject = value!),
+                : (value) {
+                    setState(() {
+                      subject = value!;
+                    });
+                  },
           ),
           if (mode != 'Stopwatch') ...[
             const SizedBox(height: 16),
@@ -588,9 +632,11 @@ class _FocusScreenState extends State<FocusScreen> {
               label: '$focusMinutes min',
               onChanged: locked
                   ? null
-                  : (value) => setState(
-                        () => focusMinutes = value.round(),
-                      ),
+                  : (value) {
+                      setState(() {
+                        focusMinutes = value.round();
+                      });
+                    },
             ),
           ],
           if (mode == 'Pomodoro') ...[
@@ -603,9 +649,11 @@ class _FocusScreenState extends State<FocusScreen> {
               label: '$breakMinutes min',
               onChanged: locked
                   ? null
-                  : (value) => setState(
-                        () => breakMinutes = value.round(),
-                      ),
+                  : (value) {
+                      setState(() {
+                        breakMinutes = value.round();
+                      });
+                    },
             ),
           ],
           const SizedBox(height: 20),
@@ -656,9 +704,12 @@ class _FocusScreenState extends State<FocusScreen> {
             ),
           const SizedBox(height: 24),
           const Text(
-            'Strict Mode in this version reminds and records abandoned sessions. Full app blocking requires native Android permissions.',
+            'Strict Mode records abandoned sessions. Full distraction blocking needs native Android permissions.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white54, fontSize: 12),
+            style: TextStyle(
+              color: Colors.white54,
+              fontSize: 12,
+            ),
           ),
         ],
       ),
@@ -671,18 +722,18 @@ class StatsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const _StatsView();
+    return const StatsView();
   }
 }
 
-class _StatsView extends StatefulWidget {
-  const _StatsView();
+class StatsView extends StatefulWidget {
+  const StatsView({super.key});
 
   @override
-  State<_StatsView> createState() => _StatsViewState();
+  State<StatsView> createState() => _StatsViewState();
 }
 
-class _StatsViewState extends State<_StatsView> {
+class _StatsViewState extends State<StatsView> {
   List<StudySession> sessions = [];
   bool ready = false;
 
@@ -709,28 +760,4 @@ class _StatsViewState extends State<_StatsView> {
         .where(
           (session) =>
               session.date.year == day.year &&
-              session.date.month == day.month &&
-              session.date.day == day.day,
-        )
-        .fold<int>(0, (total, session) => total + session.seconds);
-  }
-
-  String clock(int seconds) {
-    final hours = seconds ~/ 3600;
-    final minutes = (seconds % 3600) ~/ 60;
-    final result =
-        '${minutes.toString().padLeft(2, '0')}:'
-        '${(seconds % 60).toString().padLeft(2, '0')}';
-    return hours > 0 ? '$hours:$result' : result;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (!ready) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
-    final today = DateTime.now();
-    final days = List.generate(
-      7,
-  
+ 
