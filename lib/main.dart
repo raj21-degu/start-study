@@ -395,9 +395,7 @@ class _StudyHomeState extends State<StudyHome> {
                 }),
                 const SizedBox(height: 16),
                 const Text(
-                  'Free • No ads • No subscriptions
-'
-                  'Keep the app open while studying in this version.',
+                  'Free • No ads • No subscriptions. Keep the app open while studying in this version.',
                   textAlign: TextAlign.center,
                 ),
               ],
