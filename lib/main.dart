@@ -1,45 +1,164 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-void main() => runApp(const StudyApp());
+void main() => runApp(const StartStudyApp());
 
-class StudyApp extends StatelessWidget {
-  const StudyApp({super.key});
+class StartStudyApp extends StatelessWidget {
+  const StartStudyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final dark = ThemeData(
+      useMaterial3: true,
+      brightness: Brightness.dark,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: const Color(0xFF00C896),
+        brightness: Brightness.dark,
+      ),
+      scaffoldBackgroundColor: const Color(0xFF0B0F14),
+      cardTheme: const CardThemeData(
+        color: Color(0xFF141A21),
+        elevation: 0,
+      ),
+    );
+
     return MaterialApp(
       title: 'Start Study',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.teal,
-        ),
-      ),
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.teal,
-          brightness: Brightness.dark,
-        ),
-      ),
-      themeMode: ThemeMode.system,
-      home: const StudyHome(),
+      theme: dark,
+      darkTheme: dark,
+      themeMode: ThemeMode.dark,
+      home: const RootScreen(),
     );
   }
 }
 
-class StudyHome extends StatefulWidget {
-  const StudyHome({super.key});
+class RootScreen extends StatefulWidget {
+  const RootScreen({super.key});
 
   @override
-  State<StudyHome> createState() => _StudyHomeState();
+  State<RootScreen> createState() => _RootScreenState();
 }
 
-class _StudyHomeState extends State<StudyHome> {
+class _RootScreenState extends State<RootScreen> {
+  int page = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: IndexedStack(
+        index: page,
+        children: const [
+          FocusScreen(),
+          StatsScreen(),
+          HistoryScreen(),
+        ],
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: page,
+        onDestinationSelected: (value) =>
+            setState(() => page = value),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.timer_outlined),
+            selectedIcon: Icon(Icons.timer),
+            label: 'Focus',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.insights_outlined),
+            selectedIcon: Icon(Icons.insights),
+            label: 'Stats',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.history_outlined),
+            selectedIcon: Icon(Icons.history),
+            label: 'History',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class StudySession {
+  StudySession({
+    required this.subject,
+    required this.seconds,
+    required this.date,
+    required this.strict,
+  });
+
+  final String subject;
+  final int seconds;
+  final DateTime date;
+  final bool strict;
+
+  Map<String, dynamic> toMap() => {
+        'subject': subject,
+        'seconds': seconds,
+        'date': date.toIso8601String(),
+        'strict': strict,
+      };
+
+  static StudySession fromMap(Map<String, dynamic> map) {
+    return StudySession(
+      subject: map['subject'] as String? ?? 'Other',
+      seconds: map['seconds'] as int? ?? 0,
+      date: DateTime.tryParse(map['date'] as String? ?? '') ??
+          DateTime.now(),
+      strict: map['strict'] as bool? ?? false,
+    );
+  }
+}
+
+class StudyStore {
+  StudyStore(this._prefs);
+
+  final SharedPreferences _prefs;
+
+  List<StudySession> load() {
+    try {
+      final raw = _prefs.getString('sessions') ?? '[]';
+      final decoded = jsonDecode(raw) as List;
+      return decoded
+          .map(
+            (item) => StudySession.fromMap(
+              Map<String, dynamic>.from(item as Map),
+            ),
+          )
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> save(List<StudySession> sessions) async {
+    final encoded = jsonEncode(
+      sessions.map((session) => session.toMap()).toList(),
+    );
+    await _prefs.setString('sessions', encoded);
+  }
+
+  int get dailyGoalMinutes =>
+      _prefs.getInt('dailyGoalMinutes') ?? 180;
+
+  Future<void> setDailyGoalMinutes(int minutes) async {
+    await _prefs.setInt('dailyGoalMinutes', minutes);
+  }
+}
+
+class FocusScreen extends StatefulWidget {
+  const FocusScreen({super.key});
+
+  @override
+  State<FocusScreen> createState() => _FocusScreenState();
+}
+
+class _FocusScreenState extends State<FocusScreen> {
   final subjects = [
     'History',
     'Political Science',
@@ -61,12 +180,13 @@ class _StudyHomeState extends State<StudyHome> {
   int accumulated = 0;
   bool running = false;
   bool onBreak = false;
+  bool strictMode = false;
   bool ready = false;
 
   DateTime? started;
   Timer? ticker;
-  SharedPreferences? storage;
-  List<Map<String, dynamic>> history = [];
+  StudyStore? store;
+  List<StudySession> sessions = [];
 
   @override
   void initState() {
@@ -76,25 +196,55 @@ class _StudyHomeState extends State<StudyHome> {
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
-    List<Map<String, dynamic>> saved = [];
-    try {
-      final decoded = jsonDecode(prefs.getString('history') ?? '[]');
-      saved = (decoded as List)
-          .map((e) => Map<String, dynamic>.from(e as Map))
-          .toList();
-    } catch (_) {
-      saved = [];
-    }
+    final studyStore = StudyStore(prefs);
+
     if (!mounted) return;
+
     setState(() {
-      storage = prefs;
-      history = saved;
+      store = studyStore;
+      sessions = studyStore.load();
       ready = true;
     });
   }
 
-  int get duration =>
-      (onBreak ? breakMinutes : focusMinutes) * 60;
+  int get duration => (onBreak ? breakMinutes : focusMinutes) * 60;
+
+  int get todaySeconds {
+    final now = DateTime.now();
+    return sessions
+        .where(
+          (session) =>
+              session.date.year == now.year &&
+              session.date.month == now.month &&
+              session.date.day == now.day,
+        )
+        .fold<int>(0, (total, session) => total + session.seconds);
+  }
+
+  int get streak {
+    var count = 0;
+    final today = DateTime.now();
+
+    for (var i = 0; i < 365; i++) {
+      final day = today.subtract(Duration(days: i));
+      final seconds = sessions
+          .where(
+            (session) =>
+                session.date.year == day.year &&
+                session.date.month == day.month &&
+                session.date.day == day.day,
+          )
+          .fold<int>(0, (total, session) => total + session.seconds);
+
+      if (seconds > 0) {
+        count++;
+      } else if (i > 0) {
+        break;
+      }
+    }
+
+    return count;
+  }
 
   String clock(int seconds) {
     final hours = seconds ~/ 3600;
@@ -109,6 +259,7 @@ class _StudyHomeState extends State<StudyHome> {
   void refresh() {
     final anchor = started;
     if (!running || anchor == null) return;
+
     final seconds =
         accumulated + DateTime.now().difference(anchor).inSeconds;
 
@@ -121,8 +272,20 @@ class _StudyHomeState extends State<StudyHome> {
 
   void start() {
     if (running || !ready) return;
+
+    if (strictMode && elapsed == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Strict Mode is on. Complete the session or use Reset before leaving.',
+          ),
+        ),
+      );
+    }
+
     started = DateTime.now();
     setState(() => running = true);
+
     ticker = Timer.periodic(
       const Duration(milliseconds: 250),
       (_) => refresh(),
@@ -131,8 +294,10 @@ class _StudyHomeState extends State<StudyHome> {
 
   void pause() {
     if (!running) return;
+
     refresh();
     if (!running) return;
+
     ticker?.cancel();
     accumulated = elapsed;
     started = null;
@@ -140,6 +305,16 @@ class _StudyHomeState extends State<StudyHome> {
   }
 
   void reset() {
+    if (strictMode && running && elapsed > 60) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Strict session abandoned. Try a shorter focus round next time.',
+          ),
+        ),
+      );
+    }
+
     ticker?.cancel();
     setState(() {
       running = false;
@@ -150,23 +325,31 @@ class _StudyHomeState extends State<StudyHome> {
     });
   }
 
-  Future<void> record(int seconds) async {
-    if (seconds < 1) return;
+  Future<void> saveSession(int seconds) async {
+    if (seconds < 1 || store == null) return;
+
+    final session = StudySession(
+      subject: subject,
+      seconds: seconds,
+      date: DateTime.now(),
+      strict: strictMode,
+    );
+
     setState(() {
-      history.insert(0, {
-        'subject': subject,
-        'seconds': seconds,
-        'date': DateTime.now().toIso8601String(),
-      });
+      sessions.insert(0, session);
     });
-    await storage?.setString('history', jsonEncode(history));
+
+    await store!.save(sessions);
   }
 
   void finish() {
     ticker?.cancel();
     final wasBreak = onBreak;
+
     if (!wasBreak) {
-      record(mode == 'Stopwatch' ? elapsed : duration);
+      saveSession(
+        mode == 'Stopwatch' ? elapsed : duration,
+      );
     }
 
     setState(() {
@@ -181,23 +364,10 @@ class _StudyHomeState extends State<StudyHome> {
       SnackBar(
         content: Text(
           wasBreak
-              ? 'Break finished. Ready to study?'
-              : 'Session saved. Well done!',
+              ? 'Break complete. Start your next focus round.'
+              : 'Session saved. Keep the streak alive!',
         ),
       ),
-    );
-  }
-
-  int get todaySeconds {
-    final now = DateTime.now();
-    return history.where((entry) {
-      final date = DateTime.parse(entry['date'] as String);
-      return date.year == now.year &&
-          date.month == now.month &&
-          date.day == now.day;
-    }).fold<int>(
-      0,
-      (total, entry) => total + (entry['seconds'] as int),
     );
   }
 
@@ -213,193 +383,354 @@ class _StudyHomeState extends State<StudyHome> {
     final display = mode == 'Stopwatch'
         ? elapsed
         : (duration - elapsed).clamp(0, duration).toInt();
+    final goalProgress =
+        (todaySeconds / (store?.dailyGoalMinutes ?? 180 * 60))
+            .clamp(0.0, 1.0);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Start Study'),
-        centerTitle: true,
-      ),
-      body: !ready
-          ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(20),
-              children: [
-                const Text(
-                  'Small steps. Stronger focus.',
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 20),
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      children: [
-                        const Text('Study time today'),
-                        Text(
-                          clock(todaySeconds),
-                          style: Theme.of(context)
-                              .textTheme
-                              .headlineMedium,
-                        ),
-                        Text('${history.length} saved sessions'),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                DropdownButtonFormField<String>(
-                  value: mode,
-                  decoration: const InputDecoration(
-                    labelText: 'Mode',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: ['Pomodoro', 'Timer', 'Stopwatch']
-                      .map((item) => DropdownMenuItem(
-                            value: item,
-                            child: Text(item),
-                          ))
-                      .toList(),
-                  onChanged: locked
-                      ? null
-                      : (value) => setState(() => mode = value!),
-                ),
-                const SizedBox(height: 16),
-                DropdownButtonFormField<String>(
-                  value: subject,
-                  decoration: const InputDecoration(
-                    labelText: 'Subject',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: subjects
-                      .map((item) => DropdownMenuItem(
-                            value: item,
-                            child: Text(item),
-                          ))
-                      .toList(),
-                  onChanged: locked
-                      ? null
-                      : (value) => setState(() => subject = value!),
-                ),
-                if (mode != 'Stopwatch') ...[
-                  const SizedBox(height: 16),
-                  Text('Focus: $focusMinutes minutes'),
-                  Slider(
-                    value: focusMinutes.toDouble(),
-                    min: 5,
-                    max: 120,
-                    divisions: 23,
-                    label: '$focusMinutes min',
-                    onChanged: locked
-                        ? null
-                        : (value) => setState(
-                              () => focusMinutes = value.round(),
-                            ),
-                  ),
-                ],
-                if (mode == 'Pomodoro') ...[
-                  Text('Break: $breakMinutes minutes'),
-                  Slider(
-                    value: breakMinutes.toDouble(),
-                    min: 1,
-                    max: 30,
-                    divisions: 29,
-                    label: '$breakMinutes min',
-                    onChanged: locked
-                        ? null
-                        : (value) => setState(
-                              () => breakMinutes = value.round(),
-                            ),
-                  ),
-                ],
-                const SizedBox(height: 16),
-                Card(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .primaryContainer,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 36,
-                      horizontal: 12,
-                    ),
-                    child: Column(
-                      children: [
-                        Text(onBreak ? 'Take a break' : subject),
-                        const SizedBox(height: 12),
-                        Text(
-                          clock(display),
-                          style: Theme.of(context)
-                              .textTheme
-                              .displayLarge,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
+    return SafeArea(
+      child: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: FilledButton.icon(
-                        onPressed: running ? pause : start,
-                        icon: Icon(
-                          running ? Icons.pause : Icons.play_arrow,
-                        ),
-                        label: Text(running ? 'Pause' : 'Start'),
-                      ),
+                    Text(
+                      'Focus mode',
+                      style: Theme.of(context)
+                          .textTheme
+                          .headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.w800),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: reset,
-                        child: const Text('Reset'),
-                      ),
+                    Text(
+                      'Take back your study time.',
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodyMedium
+                          ?.copyWith(
+                            color: Colors.white70,
+                          ),
                     ),
                   ],
                 ),
-                if (mode == 'Stopwatch')
-                  TextButton(
-                    onPressed: elapsed == 0
-                        ? null
-                        : () {
-                            pause();
-                            finish();
-                          },
-                    child: const Text('Save stopwatch session'),
+              ),
+              CircleAvatar(
+                radius: 24,
+                backgroundColor:
+                    Theme.of(context).colorScheme.primary,
+                child: Text(
+                  '$streak',
+                  style: const TextStyle(
+                    color: Colors.black,
+                    fontWeight: FontWeight.w800,
                   ),
-                const SizedBox(height: 24),
-                Text(
-                  'Recent sessions',
-                  style: Theme.of(context).textTheme.titleLarge,
                 ),
-                if (history.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 16),
-                    child: Text(
-                      'Your completed sessions will appear here.',
-                    ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment:
+                              CrossAxisAlignment.start,
+                          children: [
+                            const Text('Today'),
+                            Text(
+                              clock(todaySeconds),
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .headlineMedium,
+                            ),
+                          ],
+                        ),
+                      ),
+                      SizedBox(
+                        width: 72,
+                        height: 72,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            CircularProgressIndicator(
+                              value: goalProgress,
+                              strokeWidth: 7,
+                              backgroundColor: Colors.white12,
+                            ),
+                            Text(
+                              '${(goalProgress * 100).round()}%',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelLarge,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                ...history.take(20).map((entry) {
-                  final date =
-                      DateTime.parse(entry['date'] as String);
-                  return ListTile(
+                  const SizedBox(height: 16),
+                  SwitchListTile(
                     contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.menu_book_outlined),
-                    title: Text(entry['subject'] as String),
-                    subtitle: Text(
-                      '${date.day}/${date.month}/${date.year}',
+                    title: const Text('Strict Mode'),
+                    subtitle: const Text(
+                      'Discourage quitting a focus session early.',
                     ),
-                    trailing: Text(
-                      clock(entry['seconds'] as int),
-                    ),
-                  );
-                }),
-                const SizedBox(height: 16),
-                const Text(
-                  'Free • No ads • No subscriptions. Keep the app open while studying in this version.',
-                  textAlign: TextAlign.center,
-                ),
-              ],
+                    value: strictMode,
+                    onChanged: running
+                        ? null
+                        : (value) =>
+                            setState(() => strictMode = value),
+                  ),
+                ],
+              ),
             ),
+          ),
+          const SizedBox(height: 20),
+          Card(
+            color: Theme.of(context)
+                .colorScheme
+                .primary
+                .withValues(alpha: 0.12),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                vertical: 40,
+                horizontal: 20,
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    onBreak ? 'BREAK' : subject.toUpperCase(),
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(
+                          letterSpacing: 2,
+                          color: Colors.white70,
+                        ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    clock(display),
+                    style: Theme.of(context)
+                        .textTheme
+                        .displayLarge
+                        ?.copyWith(
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 2,
+                        ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    mode == 'Stopwatch'
+                        ? 'Stopwatch running'
+                        : onBreak
+                            ? 'Rest and recover'
+                            : '$focusMinutes minute focus round',
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          DropdownButtonFormField<String>(
+            value: mode,
+            decoration: const InputDecoration(
+              labelText: 'Mode',
+              border: OutlineInputBorder(),
+            ),
+            items: ['Pomodoro', 'Timer', 'Stopwatch']
+                .map(
+                  (item) => DropdownMenuItem(
+                    value: item,
+                    child: Text(item),
+                  ),
+                )
+                .toList(),
+            onChanged: locked
+                ? null
+                : (value) => setState(() => mode = value!),
+          ),
+          const SizedBox(height: 16),
+          DropdownButtonFormField<String>(
+            value: subject,
+            decoration: const InputDecoration(
+              labelText: 'Subject',
+              border: OutlineInputBorder(),
+            ),
+            items: subjects
+                .map(
+                  (item) => DropdownMenuItem(
+                    value: item,
+                    child: Text(item),
+                  ),
+                )
+                .toList(),
+            onChanged: locked
+                ? null
+                : (value) => setState(() => subject = value!),
+          ),
+          if (mode != 'Stopwatch') ...[
+            const SizedBox(height: 16),
+            Text('Focus length: $focusMinutes minutes'),
+            Slider(
+              value: focusMinutes.toDouble(),
+              min: 5,
+              max: 120,
+              divisions: 23,
+              label: '$focusMinutes min',
+              onChanged: locked
+                  ? null
+                  : (value) => setState(
+                        () => focusMinutes = value.round(),
+                      ),
+            ),
+          ],
+          if (mode == 'Pomodoro') ...[
+            Text('Break length: $breakMinutes minutes'),
+            Slider(
+              value: breakMinutes.toDouble(),
+              min: 1,
+              max: 30,
+              divisions: 29,
+              label: '$breakMinutes min',
+              onChanged: locked
+                  ? null
+                  : (value) => setState(
+                        () => breakMinutes = value.round(),
+                      ),
+            ),
+          ],
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 16,
+                    ),
+                    backgroundColor:
+                        Theme.of(context).colorScheme.primary,
+                    foregroundColor: Colors.black,
+                  ),
+                  onPressed: running ? pause : start,
+                  icon: Icon(
+                    running ? Icons.pause : Icons.play_arrow,
+                  ),
+                  label: Text(
+                    running ? 'Pause' : 'Start focus',
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 16,
+                    ),
+                  ),
+                  onPressed: reset,
+                  child: const Text('Reset'),
+                ),
+              ),
+            ],
+          ),
+          if (mode == 'Stopwatch')
+            TextButton(
+              onPressed: elapsed == 0
+                  ? null
+                  : () {
+                      pause();
+                      finish();
+                    },
+              child: const Text('Save stopwatch session'),
+            ),
+          const SizedBox(height: 24),
+          const Text(
+            'Strict Mode in this version reminds and records abandoned sessions. Full app blocking requires native Android permissions.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+        ],
+      ),
     );
   }
 }
+
+class StatsScreen extends StatelessWidget {
+  const StatsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const _StatsView();
+  }
+}
+
+class _StatsView extends StatefulWidget {
+  const _StatsView();
+
+  @override
+  State<_StatsView> createState() => _StatsViewState();
+}
+
+class _StatsViewState extends State<_StatsView> {
+  List<StudySession> sessions = [];
+  bool ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    load();
+  }
+
+  Future<void> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final studyStore = StudyStore(prefs);
+
+    if (!mounted) return;
+
+    setState(() {
+      sessions = studyStore.load();
+      ready = true;
+    });
+  }
+
+  int secondsForDay(DateTime day) {
+    return sessions
+        .where(
+          (session) =>
+              session.date.year == day.year &&
+              session.date.month == day.month &&
+              session.date.day == day.day,
+        )
+        .fold<int>(0, (total, session) => total + session.seconds);
+  }
+
+  String clock(int seconds) {
+    final hours = seconds ~/ 3600;
+    final minutes = (seconds % 3600) ~/ 60;
+    final result =
+        '${minutes.toString().padLeft(2, '0')}:'
+        '${(seconds % 60).toString().padLeft(2, '0')}';
+    return hours > 0 ? '$hours:$result' : result;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!ready) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final today = DateTime.now();
+    final days = List.generate(
+      7,
+  
