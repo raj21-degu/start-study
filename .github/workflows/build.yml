@@ -29,4 +29,4 @@ jobs:
       - name: Generate Android project
         run: |
           flutter create --platforms=android --project-name=start_study /tmp/study_scaffold
-          cp -r /tmp/study_scaffold/and
+                    cp -r /tmp/study_scaffold/android ./android
