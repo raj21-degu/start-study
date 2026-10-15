@@ -26,7 +26,14 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Generate Android project
-        run: |
-          flutter create --platforms=android --project-name=start_study /tmp/study_scaffold
-                    cp -r /tmp/study_scaffold/android ./android
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Upload Start Study APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Start-Study-APK
+          path: build/app/outputs/flutter-apk/app-release.apk
