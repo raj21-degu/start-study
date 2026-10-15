@@ -21,7 +21,7 @@ class StartStudyApp extends StatelessWidget {
         brightness: Brightness.dark,
       ),
       scaffoldBackgroundColor: const Color(0xFF0B0F14),
-      cardTheme: const CardTheme(
+            cardTheme: const CardThemeData(
         color: Color(0xFF141A21),
         elevation: 0,
       ),
